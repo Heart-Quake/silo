@@ -1,0 +1,35 @@
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Tests & cache
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# IDE & OS
+.idea/
+.vscode/
+.cursor/
+.DS_Store
+*.swp
+*.swo
+
+# Données volumineuses ou sensibles (optionnel)
+# data/input/
+# data/output/*.csv
+
+# Env
+.env
+.env.local
+*.log

@@ -1,0 +1,9 @@
+pandas
+lxml
+spacy
+openpyxl
+pytest
+jupyter
+types-requests
+streamlit
+ftfy
