@@ -1,9 +1,16 @@
+# App & pipeline
+streamlit>=1.28.0
 pandas
 lxml
-spacy
 openpyxl
-pytest
-jupyter
-types-requests
-streamlit
 ftfy
+
+# NLP (version compatible avec le modèle fr_core_news_md 3.6)
+spacy>=3.6.0,<3.8.0
+# Modèle français (Streamlit Cloud)
+https://github.com/explosion/spacy-models/releases/download/fr_core_news_md-3.6.0/fr_core_news_md-3.6.0-py3-none-any.whl
+
+# Google Search Console API
+google-auth>=2.0.0
+google-auth-oauthlib>=1.0.0
+google-api-python-client>=2.0.0

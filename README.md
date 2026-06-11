@@ -71,9 +71,21 @@ L'application s'ouvrira dans votre navigateur à `http://localhost:8501`
 
 **Fonctionnalités de l'app :**
 - 📊 Chargement des données GSC et mapping HTML
+- 💾 Cache local des imports GSC par propriété, période, pays, device et limite de lignes
+- 🚦 Filtrage optionnel via export Screaming Frog `Internal > HTML` pour garder uniquement les URLs `200` et indexables
 - 🔍 Test du parser HTML en temps réel
 - 🧠 Test du moteur NLP avec exemples
 - 🚀 Pipeline complet avec export CSV
+
+**Cache GSC :**
+- Les imports Search Console sont stockés dans `.runtime/gsc_cache/`, dossier ignoré par Git.
+- Si les paramètres GSC sont identiques, SILO réutilise le CSV local au lieu de rappeler l'API.
+- Cochez `Forcer une nouvelle requête GSC` pour rafraîchir les données, ou utilisez `Vider cache GSC` pour repartir de zéro.
+
+**Imports ZIP volumineux :**
+- La limite Streamlit est configurée à **1 Go** via `.streamlit/config.toml` (`server.maxUploadSize = 1024`).
+- L'archive HTML est sauvegardée sur disque temporaire au moment de l'import, au lieu d'être conservée en mémoire dans la session.
+- Pour des ZIP très lourds, privilégier le lancement local avec suffisamment de RAM plutôt que Streamlit Community Cloud.
 
 ### Ligne de commande
 
@@ -82,6 +94,7 @@ Exécuter le pipeline complet :
 python -m src.silo_linker \
     --gsc-csv data/input/gsc_data.csv \
     --html-zip data/input/html_export.zip \
+    --crawl-csv data/input/screaming-frog-internal-html.csv \
     --html-prefix rendu_ \
     --output data/output/opportunities_export.csv
 ```
@@ -89,10 +102,12 @@ python -m src.silo_linker \
 **Arguments :**
 - `--gsc-csv` : Chemin vers le fichier CSV Google Search Console (requis)
 - `--html-zip` : Chemin vers l'archive ZIP HTML (requis) - Le mapping sera généré automatiquement
+- `--crawl-csv` : Export Screaming Frog `Internal > HTML` optionnel avec `Address`, `Status Code` et `Indexability`
 - `--html-prefix` : Préfixe des fichiers HTML dans le ZIP (défaut: `rendu_`)
 - `--output` : Chemin du fichier de sortie (défaut: `opportunities_export.csv`)
 
 **Note :** Le mapping HTML est généré automatiquement depuis les noms de fichiers dans le ZIP. Vous n'avez plus besoin de fournir un fichier CSV de mapping séparé.
+Si `--crawl-csv` est fourni, SILO exclut les pages sources et cibles qui ne sont pas en `200` ou qui ne sont pas `Indexable`.
 
 ## 📁 Structure du Projet
 
@@ -151,14 +166,35 @@ Le fichier `opportunities_export.csv` contient :
 
 | Colonne | Description | Exemple |
 |---------|-------------|---------|
-| `Score` | Métrique de priorisation (0-100) | 85 |
+| `Priority` | Priorité opérationnelle | High |
+| `Final_Score` | Score final combinant potentiel SEO, qualité éditoriale et confiance technique | 82 |
+| `Risk_Level` | Niveau de risque à vérifier | Medium |
+| `Priority_Target` | Indique si la cible correspond aux critères GSC prioritaires | Yes |
 | `Keyword_GSC` | Mot-clé déclencheur | formation seo |
+| `Suggested_Anchor` | Ancre courte proposée | formation SEO |
+| `Anchor_Context` | Contexte court autour de l'ancre | choisir une formation SEO adaptée |
 | `Source_URL` | Page où placer le lien | site.com/blog/article-1 |
 | `Target_URL` | Page vers laquelle faire le lien | site.com/services/formation |
-| `Anchor_Text` | Texte exact trouvé | une formation au référencement |
-| `Context_Snippet` | Paragraphe complet | ...Il est vital de suivre **une formation au référencement** pour... |
-| `XPath` | Chemin technique pour injection | /html/body/main/div/p[3] |
-| `Similarity_Type` | Type de match | Lemma_Fuzzy |
+| `Source_Type` | Typologie de la source | editorial |
+| `Target_Type` | Typologie de la cible | business |
+| `Clicks` | Clics GSC de la requête | 30 |
+| `Impressions` | Impressions GSC de la requête | 1000 |
+| `Position` | Position moyenne GSC | 8.4 |
+| `SEO_Potential_Score` | Potentiel SEO calculé | 76 |
+| `Editorial_Fit_Score` | Qualité éditoriale de l'ancre et du contexte | 84 |
+| `Decision_Reason` | Justification exploitable de la recommandation | cible prioritaire GSC; fort potentiel SEO |
+
+Le tableau de validation Streamlit et le CSV final utilisent les mêmes colonnes métier. Les anciennes colonnes techniques `Anchor_Text`, `XPath` et `Similarity_Type` restent hors export standard.
+
+## 🧠 Cache et instance locale
+
+- Le cache GSC évite de relancer une requête Search Console quand les paramètres sont inchangés.
+- Le cache d'analyse évite de retraiter le ZIP HTML si les imports et le préfixe n'ont pas changé.
+- En local, utilisez un seul port Streamlit actif pour éviter de tester une ancienne instance :
+
+```bash
+streamlit run app.py --server.port 8609
+```
 
 ## 🔧 Configuration
 

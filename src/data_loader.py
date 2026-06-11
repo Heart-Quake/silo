@@ -6,8 +6,9 @@ import csv
 import zipfile
 import os
 from pathlib import Path
-from typing import Generator, Dict, Tuple, Optional
+from typing import Any, Generator, Dict, Tuple, Optional
 import pandas as pd
+from src.scoring import assess_technical_metadata, is_indexable_crawl_metadata, normalize_url
 from src.utils import generate_mapping_from_zip
 
 
@@ -20,7 +21,13 @@ class DataLoader:
     - Fournit un générateur pour lire les fichiers HTML un par un
     """
     
-    def __init__(self, gsc_csv_path: str, html_zip_path: str, html_prefix: str = "rendu_"):
+    def __init__(
+        self,
+        gsc_csv_path: str,
+        html_zip_path: str,
+        html_prefix: str = "rendu_",
+        crawl_csv_path: str = None,
+    ):
         """
         Initialise le chargeur de données.
         
@@ -28,12 +35,16 @@ class DataLoader:
             gsc_csv_path: Chemin vers le fichier CSV GSC
             html_zip_path: Chemin vers l'archive ZIP HTML (obligatoire)
             html_prefix: Préfixe des fichiers HTML dans le ZIP (défaut: "rendu_")
+            crawl_csv_path: Chemin optionnel vers l'export Screaming Frog Internal HTML
         """
         self.gsc_csv_path = gsc_csv_path
         self.html_zip_path = html_zip_path
         self.html_prefix = html_prefix
+        self.crawl_csv_path = crawl_csv_path
         self._gsc_data = None
         self._html_mapping = None
+        self._indexable_urls = None
+        self._crawl_metadata = None
     
     def load_gsc_data(self) -> pd.DataFrame:
         """
@@ -161,6 +172,7 @@ class DataLoader:
                         if len(df) < initial_count:
                             print(f"   ⚠️  {initial_count - len(df)} lignes ignorées (données manquantes)")
                         
+                        df = self.filter_dataframe_to_indexable_urls(df, url_column='Page')
                         self._gsc_data = df
                         if i > 1:
                             print(f"   ⚠️  Fichier lu avec la stratégie {i}")
@@ -204,9 +216,169 @@ class DataLoader:
             output_csv=None,  # Pas de sauvegarde, juste en mémoire
             prefix=self.html_prefix
         )
+        self._html_mapping = self.filter_dataframe_to_indexable_urls(self._html_mapping, url_column='URL')
         print(f"✅ {len(self._html_mapping)} URLs mappées automatiquement")
         
         return self._html_mapping
+
+    def load_crawl_metadata(self) -> Optional[Dict[str, Dict[str, Any]]]:
+        """
+        Charge les metadonnees techniques depuis un export Screaming Frog.
+
+        Les colonnes strictement requises sont l'adresse et le code HTTP. Les
+        autres signaux sont exploites lorsqu'ils existent.
+        """
+        if self._crawl_metadata is not None:
+            return self._crawl_metadata
+        if not self.crawl_csv_path:
+            return None
+        if not os.path.exists(self.crawl_csv_path):
+            raise FileNotFoundError(f"Le fichier de crawl '{self.crawl_csv_path}' n'existe pas")
+
+        crawl_df = self.read_csv_with_detected_separator(self.crawl_csv_path)
+        crawl_df.columns = crawl_df.columns.str.strip()
+
+        address_column = self.find_column(crawl_df, ['Address', 'Adresse', 'URL', 'Url', 'Page'])
+        status_column = self.find_column(
+            crawl_df,
+            ['Status Code', 'HTTP Status Code', 'Code HTTP', 'Code de statut HTTP', 'HTTP Code']
+        )
+        indexability_column = self.find_column(crawl_df, ['Indexability', 'Indexabilité'])
+        canonical_column = self.find_column(
+            crawl_df,
+            [
+                'Canonical',
+                'Canonical URL',
+                'Canonical Link Element 1',
+                'URL canonique',
+                'Adresse canonique',
+            ],
+        )
+        meta_robots_column = self.find_column(
+            crawl_df,
+            ['Meta Robots', 'Meta Robots 1', 'Meta Robots Tag', 'Balise meta robots', 'Robots']
+        )
+        crawl_depth_column = self.find_column(
+            crawl_df,
+            ['Crawl Depth', 'Profondeur', 'Depth', 'Niveau de crawl']
+        )
+        unique_inlinks_column = self.find_column(
+            crawl_df,
+            ['Unique Inlinks', 'Inlinks', 'Liens entrants uniques', 'Liens entrants']
+        )
+
+        if not address_column or not status_column:
+            raise ValueError(
+                "L'export crawl doit contenir au minimum les colonnes `Address`/`Adresse` "
+                "et `Status Code`/`Code HTTP`."
+            )
+
+        metadata_by_url = {}
+        for _, row in crawl_df.iterrows():
+            url = str(row.get(address_column) or '').strip()
+            if not url:
+                continue
+
+            metadata = {
+                'address': url,
+                'status_code': row.get(status_column),
+                'indexability': row.get(indexability_column) if indexability_column else '',
+                'canonical': row.get(canonical_column) if canonical_column else '',
+                'meta_robots': row.get(meta_robots_column) if meta_robots_column else '',
+                'crawl_depth': row.get(crawl_depth_column) if crawl_depth_column else '',
+                'unique_inlinks': row.get(unique_inlinks_column) if unique_inlinks_column else '',
+            }
+
+            technical_status, technical_confidence, technical_reason = assess_technical_metadata(url, metadata)
+            metadata['technical_status'] = technical_status
+            metadata['technical_confidence'] = technical_confidence
+            metadata['technical_reason'] = technical_reason
+
+            normalized_url = self.normalize_url_for_matching(url)
+            metadata_by_url[normalized_url] = metadata
+            metadata_by_url[normalized_url.rstrip('/')] = metadata
+
+        self._crawl_metadata = metadata_by_url
+        print(f"✅ {len(self._crawl_metadata)} variantes d'URLs chargees depuis le crawl")
+        return self._crawl_metadata
+
+    def load_indexable_urls(self) -> Optional[set]:
+        """
+        Charge les URLs indexables depuis un export Screaming Frog Internal HTML.
+
+        Le filtre conserve uniquement les URLs techniquement eligibles au
+        maillage : 200, indexables, non noindex et canonical coherente.
+        """
+        if self._indexable_urls is not None:
+            return self._indexable_urls
+
+        crawl_metadata = self.load_crawl_metadata()
+        if not crawl_metadata:
+            return None
+
+        normalized_urls = set()
+        for url, metadata in crawl_metadata.items():
+            if is_indexable_crawl_metadata(url, metadata):
+                normalized_urls.add(self.normalize_url_for_matching(url))
+                normalized_urls.add(self.normalize_url_for_matching(url).rstrip('/'))
+
+        self._indexable_urls = normalized_urls
+        print(f"✅ {len(self._indexable_urls)} variantes d'URLs indexables chargées depuis le crawl")
+        return self._indexable_urls
+
+    def filter_dataframe_to_indexable_urls(self, dataframe: pd.DataFrame, url_column: str) -> pd.DataFrame:
+        """Filtre un DataFrame sur les URLs 200 + indexables si un crawl est fourni."""
+        indexable_urls = self.load_indexable_urls()
+        if not indexable_urls or url_column not in dataframe.columns:
+            return dataframe
+
+        initial_count = len(dataframe)
+        normalized_urls = dataframe[url_column].astype(str).map(self.normalize_url_for_matching)
+        keep_mask = normalized_urls.isin(indexable_urls) | normalized_urls.str.rstrip('/').isin(indexable_urls)
+        filtered = dataframe[keep_mask].copy()
+        removed_count = initial_count - len(filtered)
+        if removed_count:
+            print(f"   🚫 {removed_count} ligne(s) exclue(s) car non 200/indexables dans le crawl")
+        return filtered
+
+    @staticmethod
+    def read_csv_with_detected_separator(csv_path: str) -> pd.DataFrame:
+        """Lit un CSV Screaming Frog ou GSC en détectant le séparateur principal."""
+        with open(csv_path, 'r', encoding='utf-8', errors='ignore') as f:
+            first_line = f.readline()
+
+        separators = {
+            ',': first_line.count(','),
+            ';': first_line.count(';'),
+            '\t': first_line.count('\t'),
+        }
+        separator = max(separators, key=separators.get)
+        return pd.read_csv(
+            csv_path,
+            encoding='utf-8-sig',
+            sep=separator,
+            on_bad_lines='skip',
+            engine='python',
+            dtype=str,
+        )
+
+    @staticmethod
+    def find_column(dataframe: pd.DataFrame, candidates: list) -> Optional[str]:
+        """Trouve une colonne avec tolérance aux espaces, tirets et casse."""
+        normalized_candidates = {
+            candidate.lower().replace(' ', '_').replace('-', '_'): candidate
+            for candidate in candidates
+        }
+        for column in dataframe.columns:
+            normalized_column = column.lower().replace(' ', '_').replace('-', '_')
+            if normalized_column in normalized_candidates:
+                return column
+        return None
+
+    @staticmethod
+    def normalize_url_for_matching(url: str) -> str:
+        """Normalise légèrement les URLs pour matcher GSC, crawl et fichiers HTML."""
+        return normalize_url(url)
     
     def get_html_files_generator(self) -> Generator[Tuple[str, str], None, None]:
         """

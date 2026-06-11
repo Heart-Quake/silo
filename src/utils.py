@@ -131,14 +131,7 @@ def parse_html_filename(filename: str, prefix: str = "rendu_") -> str:
     if match:
         domain = match.group(1)
         path = match.group(2)
-        
-        if path == '':
-            # Page d'accueil
-            url = f"https://{domain}/"
-        else:
-            # Autres pages : convertir les underscores en slashes
-            path_with_slashes = path.replace('_', '/')
-            url = f"https://{domain}/{path_with_slashes}"
+        url = rebuild_url_from_export_path(domain, path)
     else:
         # Fallback: essayer de reconstruire manuellement
         # Remplacer tous les _ sauf le premier (https_) par /
@@ -146,8 +139,8 @@ def parse_html_filename(filename: str, prefix: str = "rendu_") -> str:
         if len(parts) >= 3:
             # https, domain, path...
             domain = parts[1]
-            path = '/'.join(parts[2:]) if len(parts) > 2 else ''
-            url = f"https://{domain}/{path}" if path else f"https://{domain}/"
+            path = '_'.join(parts[2:]) if len(parts) > 2 else ''
+            url = rebuild_url_from_export_path(domain, path)
         else:
             # Format inattendu
             url = url_part.replace('_', '://')
@@ -155,3 +148,33 @@ def parse_html_filename(filename: str, prefix: str = "rendu_") -> str:
                 url = 'https://' + url.lstrip('/')
     
     return url
+
+
+def rebuild_url_from_export_path(domain: str, path: str) -> str:
+    """
+    Reconstruit une URL depuis la partie exportée par Screaming Frog.
+
+    Les underscores représentent les slashes uniquement dans le chemin.
+    Dans une query string encodée, ils peuvent appartenir aux noms de paramètres
+    comme `montant_projet` ou `duree_pret` et doivent rester intacts.
+    """
+    if path == '':
+        return f"https://{domain}/"
+
+    query_match = re.search(r'%3F|\?', path, flags=re.IGNORECASE)
+    if not query_match:
+        return f"https://{domain}/{path.replace('_', '/')}"
+
+    path_part = path[:query_match.start()]
+    query_part = path[query_match.end():]
+    path_with_slashes = path_part.replace('_', '/')
+    query = decode_reserved_query_delimiters(query_part)
+
+    return f"https://{domain}/{path_with_slashes}?{query}"
+
+
+def decode_reserved_query_delimiters(query: str) -> str:
+    """Décode uniquement les séparateurs de query, sans toucher au reste de l'URL."""
+    query = re.sub(r'%26', '&', query, flags=re.IGNORECASE)
+    query = re.sub(r'%3D', '=', query, flags=re.IGNORECASE)
+    return query

@@ -15,6 +15,7 @@ from typing import List, Dict, Set, Tuple
 from src.data_loader import DataLoader
 from src.parser import ContentParser
 from src.nlp_matcher import NLPMatcher
+from src.scoring import enrich_opportunities_dataframe
 
 # Globals for worker processes
 worker_nlp = None
@@ -131,8 +132,9 @@ def process_single_file(
                 # Calculer le score et récupérer les métriques
                 score_data = _calculate_score_and_metrics_static(target_url, best_keyword, gsc_data)
                 
-                # Extraire ancre
-                anchor_text = _extract_anchor_text_static(paragraph_text, best_match)
+                # Extraire l'ancre exacte et son contexte court.
+                suggested_anchor = _extract_suggested_anchor_static(paragraph_text, best_match, best_keyword)
+                anchor_context = _extract_anchor_context_static(paragraph_text, best_match)
                 
                 file_opportunities.append({
                     'Score': score_data['score'],
@@ -142,7 +144,9 @@ def process_single_file(
                     'Clicks': score_data['clicks'],
                     'Impressions': score_data['impressions'],
                     'Position': score_data['position'],
-                    'Anchor_Text': anchor_text,
+                    'Suggested_Anchor': suggested_anchor,
+                    'Anchor_Context': anchor_context,
+                    'Anchor_Text': suggested_anchor,
                     'Context_Snippet': paragraph_text[:200] + '...' if len(paragraph_text) > 200 else paragraph_text,
                     'XPath': xpath,
                     'Similarity_Type': 'Lemma_Fuzzy'
@@ -182,8 +186,19 @@ def _calculate_score_and_metrics_static(target_url: str, keyword: str, gsc_data:
         'position': position
     }
 
-def _extract_anchor_text_static(paragraph_text: str, match: tuple) -> str:
-    """Version statique de extract_anchor_text."""
+def _extract_suggested_anchor_static(paragraph_text: str, match: tuple, fallback_keyword: str = "") -> str:
+    """Extrait le texte exact détecté pour proposer une ancre courte."""
+    start_pos, end_pos, _matched_text = match
+    if 0 <= start_pos < end_pos <= len(paragraph_text):
+        anchor_text = paragraph_text[start_pos:end_pos].strip()
+        anchor_text = re.sub(r'\s+', ' ', anchor_text)
+        if anchor_text:
+            return anchor_text
+    return re.sub(r'\s+', ' ', fallback_keyword).strip()
+
+
+def _extract_anchor_context_static(paragraph_text: str, match: tuple) -> str:
+    """Extrait un contexte court autour de l'ancre détectée."""
     start_pos, end_pos, matched_text = match
     context_start = max(0, start_pos - 30)
     context_end = min(len(paragraph_text), end_pos + 30)
@@ -191,13 +206,24 @@ def _extract_anchor_text_static(paragraph_text: str, match: tuple) -> str:
     return re.sub(r'\s+', ' ', anchor_text)
 
 
+def _extract_anchor_text_static(paragraph_text: str, match: tuple) -> str:
+    """Compatibilité legacy : retourne désormais l'ancre exacte."""
+    return _extract_suggested_anchor_static(paragraph_text, match)
+
+
 class SILOLinker:
     """
     Classe principale orchestrant le pipeline SILO.
     """
     
-    def __init__(self, gsc_csv_path: str, html_zip_path: str, html_prefix: str = "rendu_"):
-        self.data_loader = DataLoader(gsc_csv_path, html_zip_path, html_prefix)
+    def __init__(
+        self,
+        gsc_csv_path: str,
+        html_zip_path: str,
+        html_prefix: str = "rendu_",
+        crawl_csv_path: str = None,
+    ):
+        self.data_loader = DataLoader(gsc_csv_path, html_zip_path, html_prefix, crawl_csv_path)
         self.opportunities = []
         self.opportunities_set = set()
         self.max_workers = min(os.cpu_count() or 4, 8)
@@ -228,6 +254,7 @@ class SILOLinker:
     def process(self) -> pd.DataFrame:
         print("📊 Chargement des données GSC...")
         gsc_data = self.data_loader.load_gsc_data()
+        crawl_metadata = self.data_loader.load_crawl_metadata() or {}
         
         # Optimisation GSC data pour lecture rapide (TODO futur)
         
@@ -275,7 +302,8 @@ class SILOLinker:
         
         df = pd.DataFrame(self.opportunities)
         if not df.empty:
-            df = df.sort_values('Score', ascending=False)
+            df = enrich_opportunities_dataframe(df, crawl_metadata=crawl_metadata)
+            df = df.sort_values('Final_Score', ascending=False)
         return df
 
     def export_to_csv(self, df: pd.DataFrame, output_path: str):
@@ -288,6 +316,7 @@ def main():
     parser.add_argument('--gsc-csv', required=True, help='Chemin vers le fichier CSV GSC')
     parser.add_argument('--html-zip', required=True, help='Chemin vers l\'archive ZIP HTML')
     parser.add_argument('--html-prefix', default='rendu_', help='Préfixe des fichiers HTML')
+    parser.add_argument('--crawl-csv', default=None, help='Export Screaming Frog Internal HTML avec Status Code et Indexability')
     parser.add_argument('--output', default='opportunities_export.csv', help='Fichier de sortie')
     
     args = parser.parse_args()
@@ -296,7 +325,7 @@ def main():
         print("❌ Erreur : Fichiers d'entrée manquants")
         sys.exit(1)
     
-    silo = SILOLinker(args.gsc_csv, args.html_zip, args.html_prefix)
+    silo = SILOLinker(args.gsc_csv, args.html_zip, args.html_prefix, args.crawl_csv)
     
     try:
         opportunities_df = silo.process()

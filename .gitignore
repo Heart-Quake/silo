@@ -28,6 +28,9 @@ htmlcov/
 # Données volumineuses ou sensibles (optionnel)
 # data/input/
 # data/output/*.csv
+.runtime/
+config/client_secret.json
+config/token.json
 
 # Env
 .env

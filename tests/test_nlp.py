@@ -53,6 +53,21 @@ class TestLemmatization:
         # sont des lemmes différents. C'est une limitation connue de la lemmatisation.
         # Le test vérifie au moins que le système fonctionne et que les stop-words sont ignorés.
         assert isinstance(matches, list), "Doit retourner une liste de matches"
+
+    def test_anchor_keeps_stopwords_between_matched_terms(self, mock_nlp):
+        """
+        L'ancre retournée doit conserver la forme réelle du texte, y compris
+        les stopwords entre deux termes matchés.
+        """
+        matcher = NLPMatcher(nlp_model=mock_nlp, tolerance=2)
+        text = "Je suis un consultant en SEO expérimenté."
+        keyword = "Consultant SEO"
+
+        matches = matcher.find_matches(text, keyword)
+
+        assert matches
+        start, end, _context = matches[0]
+        assert text[start:end] == "consultant en SEO"
     
     def test_sliding_window_proximity(self, mock_nlp):
         """

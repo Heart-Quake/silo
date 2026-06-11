@@ -1,0 +1,5 @@
+# Dépendances de dev (tests, etc.)
+-r requirements.txt
+pytest
+jupyter
+types-requests

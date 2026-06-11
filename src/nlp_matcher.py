@@ -181,18 +181,21 @@ class NLPMatcher:
             window_lemmes = [lemme for lemme, _ in window]
             
             if self._check_lemma_match(keyword_lemmes, window_lemmes):
-                start_token_idx = text_lemmes[i][1]
-                
-                # On essaie de trouver la fin réelle du match dans la fenêtre
-                # (le dernier lemme du mot-clé qui a matché)
-                last_match_idx = i
+                # On récupère les bornes réelles du segment dans le texte original.
+                # Les tokens intermédiaires sont conservés pour garder les stopwords,
+                # flexions et formes singulier/pluriel visibles dans le contenu.
+                matched_token_positions = []
                 kw_ptr = 0
                 for j, (l, pos) in enumerate(window):
                     if kw_ptr < len(keyword_lemmes) and self._is_fuzzy_match(keyword_lemmes[kw_ptr], l):
-                        last_match_idx = pos
+                        matched_token_positions.append(pos)
                         kw_ptr += 1
                 
-                end_token_idx = last_match_idx
+                if not matched_token_positions:
+                    continue
+                
+                start_token_idx = matched_token_positions[0]
+                end_token_idx = matched_token_positions[-1]
                 
                 if start_token_idx < len(text_doc) and end_token_idx < len(text_doc):
                     start_char = text_doc[start_token_idx].idx
