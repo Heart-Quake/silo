@@ -3,6 +3,7 @@ Application Streamlit pour SILO (Semantic Internal Link Optimizer).
 Interface "Wizard" guidée pour une expérience utilisateur simplifiée.
 """
 import hashlib
+import importlib
 import json
 import traceback
 import streamlit as st
@@ -16,7 +17,10 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional, Tuple
 
-from automation_seo_theme import apply_automation_seo_theme
+import automation_seo_theme
+
+automation_seo_theme = importlib.reload(automation_seo_theme)
+apply_automation_seo_theme = automation_seo_theme.apply_automation_seo_theme
 
 # --- CONFIGURATION ---
 st.set_page_config(
