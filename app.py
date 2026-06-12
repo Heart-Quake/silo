@@ -46,13 +46,13 @@ except Exception as e:
 st.markdown("""
 <style>
     .stProgress > div > div > div > div {
-        background-color: #4CAF50;
+        background-color: var(--yn-accent);
     }
     .step-header {
         font-size: 1.5rem;
         font-weight: 600;
         margin-bottom: 1rem;
-        color: #333;
+        color: var(--yn-text);
     }
     .block-container {
         padding-top: 5rem;
@@ -60,6 +60,17 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+st.markdown(
+    """
+    <section class="tool-hero">
+        <div class="tool-kicker">Maillage interne</div>
+        <h1 class="tool-title">SILO</h1>
+        <p class="tool-lead">Identifie les rapprochements semantiques entre URLs et prepare les recommandations de liens internes a valider.</p>
+    </section>
+    """,
+    unsafe_allow_html=True,
+)
 
 # --- STATE MANAGEMENT ---
 if 'step' not in st.session_state:
@@ -85,8 +96,8 @@ ADVANCED_REVIEW_COLUMNS = REVIEW_COLUMNS + DEBUG_COLUMNS
 
 # --- SIDEBAR & INIT ---
 with st.sidebar:
-    st.title("🔗 SILO")
-    st.caption("Optimisation Sémantique de Maillage Interne")
+    st.header("SILO")
+    st.caption("Maillage interne semantique")
     
     st.markdown("---")
     
